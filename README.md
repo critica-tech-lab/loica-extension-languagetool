@@ -57,6 +57,16 @@ single ProseMirror instance.
 `defaultEnabled: false` — off on a fresh install (needs an external server). An
 admin enables it from the Extensions panel once a server is reachable.
 
+**Transport:** document text is POSTed to `LANGUAGETOOL_URL`, so a **non-local
+server must be `https://`** — the extension refuses to send content to a remote
+`http://` host. Plain `http://` is allowed only for loopback (`localhost`,
+`127.0.0.1`, `::1`) for local dev. Examples:
+
+```bash
+LANGUAGETOOL_URL=http://localhost:8081       # local dev (loopback, ok)
+LANGUAGETOOL_URL=https://lt.example.com      # remote (must be https)
+```
+
 ### Run a LanguageTool server
 
 ```bash

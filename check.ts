@@ -54,12 +54,36 @@ interface LTMatch {
   issueType: string;
 }
 
+/**
+ * Guard the target URL. Document text is POSTed to this server, so it must not
+ * leave the machine over plaintext: require https, except for a loopback host
+ * (localhost / 127.0.0.1 / ::1) where http is fine for local dev. Throws with a
+ * clear message otherwise so a misconfigured remote never leaks content.
+ */
+function assertSafeUrl(base: string): void {
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    throw new Error(`LANGUAGETOOL_URL is not a valid URL: ${base}`);
+  }
+  if (url.protocol === "https:") return;
+  const host = url.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
+  const isLoopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
+  if (url.protocol === "http:" && isLoopback) return;
+  throw new Error(
+    `Refusing to send document text to ${base} over ${url.protocol.replace(":", "")}. ` +
+      `Use https:// for a non-local LanguageTool server (http is only allowed for localhost).`,
+  );
+}
+
 /** Check `text` with the LanguageTool server; return trimmed matches. */
 async function checkText(
   text: string,
   language: string,
 ): Promise<{ matches: LTMatch[]; language: string }> {
   const base = (process.env.LANGUAGETOOL_URL || "http://localhost:8081").replace(/\/$/, "");
+  assertSafeUrl(base);
 
   // LanguageTool's /v2/check takes application/x-www-form-urlencoded.
   const form = new URLSearchParams();
