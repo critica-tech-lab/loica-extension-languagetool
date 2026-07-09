@@ -12,7 +12,7 @@
 import type { LoicaExtension } from "~/extensions/types";
 import { LOICA_EXTENSION_API_VERSION } from "~/extensions/types";
 
-export const languagetoolServerExtension: LoicaExtension = {
+const languagetoolServerExtension: LoicaExtension = {
   id: "languagetool",
   apiVersion: LOICA_EXTENSION_API_VERSION,
   version: "0.2.0",
@@ -20,3 +20,5 @@ export const languagetoolServerExtension: LoicaExtension = {
     "Inline grammar, spelling and style checking with a self-hosted LanguageTool server. Underlines issues in the text; click to apply a fix.",
   defaultEnabled: false,
 };
+
+export default languagetoolServerExtension;

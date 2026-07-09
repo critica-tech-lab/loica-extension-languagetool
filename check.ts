@@ -1,11 +1,12 @@
 /**
  * POST /api/languagetool/:id — grammar/spell/style check text with a
  * self-hosted LanguageTool server. Read-only: never persists anything back to
- * the document. Auth mirrors the translate route (api.translate.$id.ts).
+ * the document. Auth mirrors the doc export routes (api.doc-pdf.$id.ts).
  *
- * This module exports the route `action`; a thin shim at
- * `app/routes/api.languagetool.$id.ts` re-exports it (a real resource route →
- * server-only, no client leak), matching the translation extension's shape.
+ * This module IS the route module for `/api/languagetool/:id` (registered by
+ * `./routes.ts`, discovered by the extension route aggregator). It exports only
+ * `action`, so React Router treats it as a server-only resource route — no
+ * client leak. The extension is vendored under `app/`, so no shim is needed.
  *
  * The inline editor plugin (`languagetool-plugin.ts`) POSTs the doc serialised
  * to PLAIN TEXT here (not markdown), so offsets map cleanly back to editor

@@ -6,17 +6,33 @@ the editor; click an underline to see the explanation and apply a suggested
 fix. **Read-only until you accept** — the document only changes when you click a
 suggestion.
 
-Lives out-of-root and is symlinked into `app/extensions/languagetool`, mirroring
-`loica-extension-translation`.
+A self-contained extension folder under `app/extensions/languagetool`. Loica's
+registry auto-discovers it at build time (glob) — nothing in core names it.
+Upstream source of truth: `loica-extension-languagetool`.
 
 ## Architecture
 
 | File | Role |
 |------|------|
-| `index.ts` | Client registry entry — contributes an `editorPlugins` factory. |
-| `index.server.ts` | Server registry entry — makes the ext "enabled" so the plugin mounts. |
+| `index.ts` | Client entry — `export default` a `LoicaExtension` that contributes an `editorPlugins` factory. |
+| `index.server.ts` | Server entry — `export default` so the ext registers server-side (enablement + route gating). |
+| `routes.ts` | `export default` the `/api/languagetool/:id` route, pointing straight at `check.ts` (no shim). |
 | `languagetool-plugin.ts` | The ProseMirror plugin: serialise → check → map offsets → inline decorations + click-to-fix popover. |
 | `check.ts` | Route `action`: auth + POST to LanguageTool, returns trimmed `{ matches, language, checked }`. Never writes the doc. |
+
+### How it plugs into loica (zero core edits)
+
+The extension relies only on loica's generic extension seams — the core has no
+LanguageTool-specific code:
+
+- **Discovery** — `app/extensions/index.ts` / `index.server.ts` / `routes.ts`
+  glob `app/extensions/<name>/*` and register any that `export default`. Drop
+  this folder in → registered; remove it → gone.
+- **`editorPlugins` seam** — the client `index.ts` returns a ProseMirror plugin
+  via `editorPlugins(ctx)`; the core mounts it (`ProseMirrorEditor.tsx`,
+  non-readOnly). The plugin imports `prosemirror-state` / `prosemirror-view`
+  bare; the host's `vite.config.ts` already `dedupe`s PM so it shares the
+  editor's single instance.
 
 ### How inline highlighting works
 
@@ -32,21 +48,6 @@ Lives out-of-root and is symlinked into `app/extensions/languagetool`, mirroring
 
 Decorations are editor-view state — **not synced over Yjs**, so each collaborator
 checks their own view independently.
-
-### Core seam this needs in loica (one-time)
-
-Reuses a generic extension point rather than anything LT-specific:
-
-- `app/extensions/types.ts` — `editorPlugins?(ctx)` field + `ExtensionEditorPluginContext`.
-- `app/extensions/hooks.ts` — `useEditorPluginFactories()` (enabled exts' factories).
-- `app/components/DocEditorView.tsx` — passes the factories to the editor.
-- `app/components/ProseMirrorEditor.tsx` — mounts them in the plugin list (non-readOnly).
-- `app/extensions/index.ts` / `index.server.ts` — register this extension.
-- `app/routes/api.languagetool.$id.ts` — shim route re-exporting `check.ts`'s `action`.
-
-The plugin imports `prosemirror-state` / `prosemirror-view` bare; the host's
-`vite.config.ts` already `dedupe`s all PM packages, so it shares the editor's
-single ProseMirror instance.
 
 ## Config (env, optional)
 
@@ -79,8 +80,11 @@ license. Language is auto-detected per check.
 
 ## Install
 
+Drop the folder in and rebuild — no core edits:
+
 ```bash
-ln -s /path/to/loica-extension-languagetool /path/to/loica/app/extensions/languagetool
-# apply the core-seam edits above, then rebuild:
+cp -R /path/to/loica-extension-languagetool /path/to/loica/app/extensions/languagetool
 bun run build && restart
+# then enable "languagetool" in the Extensions admin panel, with a reachable
+# LANGUAGETOOL_URL in the environment.
 ```
