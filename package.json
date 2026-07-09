@@ -1,0 +1,8 @@
+{
+  "name": "loica-extension-languagetool",
+  "version": "0.2.0",
+  "description": "Inline grammar, spelling and style checking for Loica documents with a self-hosted LanguageTool server. Underlines issues in the text; click to apply a fix.",
+  "type": "module",
+  "main": "index.ts",
+  "engines": { "loica": "1" }
+}
