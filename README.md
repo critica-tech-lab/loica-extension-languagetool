@@ -80,11 +80,23 @@ license. Language is auto-detected per check.
 
 ## Install
 
-Drop the folder in and rebuild — no core edits:
+Requires a loica build with the generic extension seam (auto-discovery +
+`editorPlugins` + out-of-root `~/` alias). No loica core edits — link the folder
+in and drop the shim route:
 
 ```bash
-cp -R /path/to/loica-extension-languagetool /path/to/loica/app/extensions/languagetool
+# 1. Symlink this repo into the host's extensions dir (auto-discovered).
+ln -s /path/to/loica-extension-languagetool /path/to/loica/app/extensions/languagetool
+
+# 2. Copy the route shim under app/routes/ — React Router only splits route
+#    modules physically under app/, and this repo is symlinked out-of-root.
+cp /path/to/loica-extension-languagetool/route-shim.ts \
+   /path/to/loica/app/routes/api.languagetool.\$id.ts
+
+# 3. Build + restart, then enable "languagetool" in the Extensions admin panel
+#    with a reachable LANGUAGETOOL_URL in the environment.
 bun run build && restart
-# then enable "languagetool" in the Extensions admin panel, with a reachable
-# LANGUAGETOOL_URL in the environment.
 ```
+
+The host git-ignores both `app/extensions/languagetool` and the shim, so loica
+never tracks this extension's code.
