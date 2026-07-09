@@ -85,18 +85,24 @@ Requires a loica build with the generic extension seam (auto-discovery +
 in and drop the shim route:
 
 ```bash
+cd /path/to/loica
+
 # 1. Symlink this repo into the host's extensions dir (auto-discovered).
-ln -s /path/to/loica-extension-languagetool /path/to/loica/app/extensions/languagetool
+ln -s /path/to/loica-extension-languagetool app/extensions/languagetool
 
 # 2. Copy the route shim under app/routes/ — React Router only splits route
 #    modules physically under app/, and this repo is symlinked out-of-root.
-cp /path/to/loica-extension-languagetool/route-shim.ts \
-   /path/to/loica/app/routes/api.languagetool.\$id.ts
+cp app/extensions/languagetool/route-shim.ts app/routes/api.languagetool.\$id.ts
 
-# 3. Build + restart, then enable "languagetool" in the Extensions admin panel
+# 3. Ignore both LOCALLY (the host's tracked .gitignore names no extension —
+#    core stays fully agnostic), so they never show up as untracked.
+printf '/app/extensions/languagetool\n/app/routes/api.languagetool.\$id.ts\n' \
+  >> .git/info/exclude
+
+# 4. Build + restart, then enable "languagetool" in the Extensions admin panel
 #    with a reachable LANGUAGETOOL_URL in the environment.
 bun run build && restart
 ```
 
-The host git-ignores both `app/extensions/languagetool` and the shim, so loica
-never tracks this extension's code.
+The host never tracks — or even mentions — this extension: the symlink and shim
+are ignored via `.git/info/exclude` (local, not the versioned `.gitignore`).
