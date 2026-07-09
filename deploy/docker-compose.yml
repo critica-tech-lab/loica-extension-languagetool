@@ -1,0 +1,27 @@
+# LanguageTool server for Loica — run this LOCAL to loica (same host), not
+# remote. LT is light (~1–2 GB RAM) and latency-sensitive (inline, always-on),
+# so co-locating it with loica keeps every check off the network.
+#
+# The n-gram language model catches context/confused-word errors (their/there,
+# piece/peace) that the base rules miss — biggest win for Spanish, where LT's
+# rule coverage is thinner. Drop the n-gram data into ./ngrams (see README).
+services:
+  languagetool:
+    image: erikvl87/languagetool
+    container_name: loica-languagetool
+    # Bind to loopback only — loica proxies to it; never expose LT publicly.
+    ports:
+      - "127.0.0.1:8081:8010"
+    environment:
+      # Directory holding per-language n-gram subdirs (en/, es/, …).
+      - langtool_languageModel=/ngrams
+      # n-gram lookups need more heap than the bare server.
+      - Java_Xmx=2g
+    volumes:
+      - ./ngrams:/ngrams:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8010/v2/languages"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
