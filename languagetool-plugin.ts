@@ -47,6 +47,23 @@ function issueColor(issueType: string): string {
   return "#3b82c4"; // blue — style, register, etc.
 }
 
+/** English label from the (always-English) issueType — LT's `category` is
+ *  localised to the checked language, so we don't use it in the UI. */
+function issueLabel(issueType: string): string {
+  const map: Record<string, string> = {
+    misspelling: "Spelling",
+    typographical: "Typography",
+    grammar: "Grammar",
+    style: "Style",
+    punctuation: "Punctuation",
+    whitespace: "Spacing",
+    duplication: "Repetition",
+    "non-conformance": "Style",
+  };
+  if (map[issueType]) return map[issueType];
+  return issueType ? issueType[0].toUpperCase() + issueType.slice(1) : "Issue";
+}
+
 // ── plain-text serialisation + offset → PM position mapping ──────────────────
 
 interface Seg {
@@ -115,7 +132,7 @@ function buildDecorations(doc: PMNode, segs: Seg[], matches: LTMatch[]): Decorat
           to,
           {
             class: "lt-issue",
-            style: `text-decoration: underline wavy ${color}; text-decoration-skip-ink: none; text-underline-offset: 2px; cursor: pointer;`,
+            style: `text-decoration: underline; text-decoration-color: ${color}; text-decoration-thickness: 1.5px; text-underline-offset: 2px; cursor: pointer;`,
           },
           // Spec metadata — read back on click to build the popover.
           { ltMatch: m, ltFrom: from, ltTo: to },
@@ -177,12 +194,12 @@ function openPopover(
   } as CSSStyleDeclaration);
 
   const cat = document.createElement("div");
-  cat.textContent = match.category || match.issueType || "Issue";
+  cat.textContent = issueLabel(match.issueType);
   Object.assign(cat.style, {
     fontSize: "11px",
     textTransform: "uppercase",
     letterSpacing: "0.04em",
-    opacity: "0.6",
+    opacity: "0.55",
     marginBottom: "4px",
   } as CSSStyleDeclaration);
   pop.appendChild(cat);
