@@ -39,8 +39,14 @@ Without n-gram data the server still runs fine on base rules — just remove the
 
 ## 2. Run
 
+The compose file builds a **custom image** (`./Dockerfile`) that bakes our own
+accepted-word lists (`dict/en_spelling_additions.txt`,
+`dict/es_spelling_additions.txt`) into LanguageTool's base `spelling.txt`. Baking
+them into the image is what makes them survive restarts — a volume mount would
+overwrite the base dictionary instead.
+
 ```bash
-docker compose up -d
+docker compose up -d --build
 # verify:
 curl -s -XPOST http://localhost:8081/v2/check \
   --data-urlencode 'text=Nos vemos aya en la casa' --data 'language=es' | jq '.matches[].message'
@@ -48,6 +54,22 @@ curl -s -XPOST http://localhost:8081/v2/check \
 
 Without the n-gram model the server still runs (base rules only); with it, the
 `CONFUSION_RULE`-type matches appear for statistically-unlikely word sequences.
+
+### Custom accepted words
+
+Add one word per line (no spaces) to `dict/en_spelling_additions.txt` /
+`dict/es_spelling_additions.txt`, then **rebuild** — the words are baked at build
+time, so a plain restart reuses the old image and won't pick them up:
+
+```bash
+docker compose up -d --build   # after editing dict/*
+```
+
+This works identically in production: `git pull` to get the updated `dict/*`,
+then `docker compose up -d --build` on the server. No image registry needed — the
+build runs on the host (needs internet once to pull the base image, then cached).
+Per-user "learned words" are handled separately, in the loica app layer, and need
+no rebuild.
 
 ## 3. Point loica at it
 

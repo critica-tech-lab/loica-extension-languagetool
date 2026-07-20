@@ -7,7 +7,11 @@
 # rule coverage is thinner. Drop the n-gram data into ./ngrams (see README).
 services:
   languagetool:
-    image: erikvl87/languagetool
+    # Custom image (see ./Dockerfile) — bakes our accepted-word lists into the
+    # base dictionaries so they survive restarts. Rebuild after editing dict/*.
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: loica-languagetool
     # Bind to loopback only — loica proxies to it; never expose LT publicly.
     ports:

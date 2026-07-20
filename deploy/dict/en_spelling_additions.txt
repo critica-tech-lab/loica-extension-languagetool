@@ -1,0 +1,4 @@
+# English words LanguageTool should accept (one per line, no spaces).
+# Appended to the base spelling.txt at image build time — run
+# `docker compose build` after editing, then restart the stack.
+# Empty for now; add brand/jargon terms as they come up.

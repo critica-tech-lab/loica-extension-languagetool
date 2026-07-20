@@ -1,0 +1,4 @@
+# Palabras en español que LanguageTool debe aceptar (una por línea, sin espacios).
+# Se agregan al spelling.txt base al construir la imagen — corre
+# `docker compose build` tras editar, luego reinicia el stack.
+# Vacío por ahora; agrega marcas/jerga a medida que aparezcan.
