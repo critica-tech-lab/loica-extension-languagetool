@@ -22,25 +22,62 @@
  */
 import type { ActionFunctionArgs } from "react-router";
 import { getSessionUser } from "~/lib/auth.server";
-import { getDocument } from "~/lib/document.server";
+import { getDocument, getDocumentByToken } from "~/lib/document.server";
 import { getMembership } from "~/lib/workspace.server";
 import { hasSharedAccess } from "~/lib/sharing.server";
 import { stripFrontmatter } from "~/lib/templates";
 
-async function authorizeDoc(request: Request, params: { id?: string }) {
+function parseCookies(header: string): Record<string, string> {
+  return Object.fromEntries(
+    header.split(";").flatMap((part) => {
+      const trimmed = part.trim();
+      const eq = trimmed.indexOf("=");
+      if (eq < 1) return [];
+      return [[trimmed.slice(0, eq).trim(), decodeURIComponent(trimmed.slice(eq + 1).trim())]];
+    }),
+  );
+}
+
+/**
+ * Grant access only to a workspace member, a folder-share recipient, or a caller
+ * who actually presents a valid share token for *this* document.
+ *
+ * The earlier version treated "the document has a share token" as "no auth
+ * needed", without the caller ever proving they held it — so knowing a document
+ * id was enough to POST arbitrary text here anonymously, and expired or
+ * password-protected links kept working. Resolving the token via
+ * `getDocumentByToken` is the same path `routes/s.$token.tsx` uses, which also
+ * enforces `share_expires_at`.
+ */
+async function authorizeDoc(
+  request: Request,
+  params: { id?: string },
+  shareToken?: string,
+) {
   const doc = getDocument(params.id!);
   if (!doc) throw new Response("Not found", { status: 404 });
 
-  const isPublic = !!(doc.public_token || doc.edit_token);
-  if (!isPublic) {
-    const user = getSessionUser(request);
-    if (!user) throw new Response("Not found", { status: 404 });
+  const user = getSessionUser(request);
+  if (user) {
     const role = getMembership(doc.workspace_id, user.id, user.is_admin);
     const shared = doc.folder_id ? hasSharedAccess(doc.folder_id, user.id) : false;
-    if (!role && !shared) throw new Response("Not found", { status: 404 });
+    if (role || shared) return doc;
   }
 
-  return doc;
+  const token = shareToken?.trim();
+  if (token) {
+    const viaToken = getDocumentByToken(token);
+    // Must resolve, and must resolve to *this* document — a valid token for some
+    // other document is not access to this one.
+    if (viaToken && viaToken.document.id === doc.id) {
+      const passwordOk =
+        !viaToken.hasPassword ||
+        parseCookies(request.headers.get("Cookie") ?? "")[`__share_pwd_${token}`] === "1";
+      if (passwordOk) return doc;
+    }
+  }
+
+  throw new Response("Not found", { status: 404 });
 }
 
 /** One LanguageTool match, trimmed to the fields the UI renders. */
@@ -139,12 +176,14 @@ async function checkText(
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const doc = await authorizeDoc(request, params);
-
-  const { content, language } = (await request.json()) as {
+  const { content, language, shareToken } = (await request.json()) as {
     content?: string;
     language?: string;
+    shareToken?: string;
   };
+
+  // The share token travels in the body, so parse before authorizing.
+  const doc = await authorizeDoc(request, params, shareToken);
 
   // Frontmatter strip is a no-op for the plain text the editor sends, but keeps
   // the stored-doc fallback safe.

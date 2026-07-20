@@ -245,6 +245,16 @@ function openPopover(
 
 // ── the plugin ───────────────────────────────────────────────────────────────
 
+/**
+ * The share token for a publicly-viewed document, read off `/s/:token`. Members
+ * viewing a document normally are on a different path and get `null` — they are
+ * authorised by session instead.
+ */
+function shareTokenFromLocation(): string | null {
+  const m = window.location.pathname.match(/^\/s\/([^/?#]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 export interface LanguageToolPluginOptions {
   /** Document id → POST target `/api/languagetool/:docId`. */
   docId: string;
@@ -310,7 +320,11 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
           const res = await fetch(`/api/languagetool/${opts.docId}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content: text, language }),
+            body: JSON.stringify({
+              content: text,
+              language,
+              shareToken: shareTokenFromLocation() || undefined,
+            }),
           });
           if (!res.ok) return;
           const data = (await res.json()) as { matches?: LTMatch[] };
