@@ -81,28 +81,27 @@ license. Language is auto-detected per check.
 ## Install
 
 Requires a loica build with the generic extension seam (auto-discovery +
-`editorPlugins` + out-of-root `~/` alias). No loica core edits — link the folder
-in and drop the shim route:
+`editorPlugins`). No loica core edits.
+
+Installed as a git submodule, so the extension lives physically under `app/` and
+its `routes.ts` points straight at `check.ts` — no symlink, no route shim:
 
 ```bash
 cd /path/to/loica
+git submodule add git@github.com:critica-tech-lab/loica-extension-languagetool.git \
+  app/extensions/languagetool
 
-# 1. Symlink this repo into the host's extensions dir (auto-discovered).
-ln -s /path/to/loica-extension-languagetool app/extensions/languagetool
-
-# 2. Copy the route shim under app/routes/ — React Router only splits route
-#    modules physically under app/, and this repo is symlinked out-of-root.
-cp app/extensions/languagetool/route-shim.ts app/routes/api.languagetool.\$id.ts
-
-# 3. Ignore both LOCALLY (the host's tracked .gitignore names no extension —
-#    core stays fully agnostic), so they never show up as untracked.
-printf '/app/extensions/languagetool\n/app/routes/api.languagetool.\$id.ts\n' \
-  >> .git/info/exclude
-
-# 4. Build + restart, then enable "languagetool" in the Extensions admin panel
-#    with a reachable LANGUAGETOOL_URL in the environment.
+# Build + restart, then enable "languagetool" in the Extensions admin panel
+# with a reachable LANGUAGETOOL_URL in the environment.
 bun run build && restart
 ```
 
-The host never tracks — or even mentions — this extension: the symlink and shim
-are ignored via `.git/info/exclude` (local, not the versioned `.gitignore`).
+Anyone cloning loica afterward gets it with `git submodule update --init
+app/extensions/languagetool`. The pinned commit is tracked in loica, so the
+installed version travels with the repo.
+
+> Earlier installs symlinked this repo into `app/extensions/` and copied a shim
+> into `app/routes/`, kept out of git via `.git/info/exclude`. That worked but
+> left no versioned record of what was installed, and the out-of-root symlink
+> broke React Router's server/client split unless the shim was present. The
+> submodule layout removes both problems.
