@@ -6,4 +6,5 @@ import { route, type RouteConfigEntry } from "@react-router/dev/routes";
 // described in this repo's README).
 export default [
   route("api/languagetool/:id", "extensions/languagetool/check.ts"),
+  route("api/languagetool/:id/words", "extensions/languagetool/words.ts"),
 ] satisfies RouteConfigEntry[];

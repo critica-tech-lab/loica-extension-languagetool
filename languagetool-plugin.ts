@@ -166,6 +166,15 @@ function onDocMouseDown(e: MouseEvent) {
   if (activePopover && !activePopover.contains(e.target as Node)) closePopover();
 }
 
+interface LearnContext {
+  /** Document id → POST target `/api/languagetool/:docId/words`. */
+  docId: string;
+  /** LanguageTool code the word applies to (LT's detected language). */
+  lang: string;
+  /** Re-run the check so the accepted word's underline clears immediately. */
+  onLearned: () => void;
+}
+
 function openPopover(
   view: EditorView,
   match: LTMatch,
@@ -173,6 +182,7 @@ function openPopover(
   to: number,
   clientX: number,
   clientY: number,
+  learn: LearnContext | null,
 ) {
   closePopover();
   const pop = document.createElement("div");
@@ -237,6 +247,42 @@ function openPopover(
     pop.appendChild(row);
   }
 
+  // "Learn word" — only for spelling matches, and only when a logged-in user is
+  // present (anonymous share-token viewers get `learn === null`). Teaches the
+  // flagged token so it stops being underlined for this user.
+  if (learn && match.issueType === "misspelling") {
+    const word = view.state.doc.textBetween(from, to);
+    const learnBtn = document.createElement("button");
+    learnBtn.type = "button";
+    learnBtn.textContent = `Add “${word}” to dictionary`;
+    Object.assign(learnBtn.style, {
+      display: "block",
+      marginTop: "8px",
+      padding: "3px 0",
+      border: "none",
+      background: "none",
+      color: "var(--fg, #111)",
+      opacity: "0.6",
+      fontSize: "12px",
+      cursor: "pointer",
+      textAlign: "left",
+    } as CSSStyleDeclaration);
+    learnBtn.addEventListener("click", async () => {
+      closePopover();
+      try {
+        await fetch(`/api/languagetool/${learn.docId}/words`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ word, lang: learn.lang }),
+        });
+      } catch {
+        // Non-fatal: the word just won't be remembered. Re-check anyway.
+      }
+      learn.onLearned();
+    });
+    pop.appendChild(learnBtn);
+  }
+
   document.body.appendChild(pop);
   activePopover = pop;
   document.addEventListener("mousedown", onDocMouseDown, true);
@@ -267,6 +313,12 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
   // Latest serialisation, kept so a click can resolve the range even after the
   // decoration was built asynchronously.
   let lastSegs: Seg[] = [];
+  // Language LT actually used for the last check (its detected code) — a learned
+  // word is stored against this, not the "auto" request value.
+  let lastLang = language;
+  // Assigned by view() so a "Learn word" click can re-run the check and clear
+  // the underline immediately.
+  let recheck: (() => void) | null = null;
 
   return new Plugin<DecorationSet>({
     key: languagetoolPluginKey,
@@ -297,7 +349,11 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
           if (!hit) return false;
           const spec = hit.spec as { ltMatch?: LTMatch; ltFrom?: number; ltTo?: number };
           if (!spec.ltMatch) return false;
-          openPopover(view, spec.ltMatch, spec.ltFrom!, spec.ltTo!, event.clientX, event.clientY);
+          // No account behind an anonymous share view → no "Learn word" button.
+          const learn: LearnContext | null = shareTokenFromLocation()
+            ? null
+            : { docId: opts.docId, lang: lastLang, onLearned: () => recheck?.() };
+          openPopover(view, spec.ltMatch, spec.ltFrom!, spec.ltTo!, event.clientX, event.clientY, learn);
           return true;
         } catch {
           return false; // never let a click handler throw into the editor
@@ -327,8 +383,9 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
             }),
           });
           if (!res.ok) return;
-          const data = (await res.json()) as { matches?: LTMatch[] };
+          const data = (await res.json()) as { matches?: LTMatch[]; language?: string };
           if (mySeq !== seq) return; // a newer check superseded this one
+          if (data.language) lastLang = data.language;
           const decos = buildDecorations(view.state.doc, lastSegs, data.matches ?? []);
           view.dispatch(view.state.tr.setMeta(languagetoolPluginKey, decos));
         } catch {
@@ -342,6 +399,9 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
         timer = setTimeout(runCheck, CHECK_DEBOUNCE_MS);
       }
 
+      // Expose an immediate re-check for the "Learn word" action.
+      recheck = () => { void runCheck(); };
+
       // Initial check shortly after mount (let Yjs sync the doc in first).
       timer = setTimeout(runCheck, CHECK_DEBOUNCE_MS);
 
@@ -351,6 +411,7 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
         },
         destroy() {
           if (timer) clearTimeout(timer);
+          recheck = null;
           closePopover();
         },
       };

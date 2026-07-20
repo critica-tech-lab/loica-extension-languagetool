@@ -26,6 +26,7 @@ import { getDocument, getDocumentByToken } from "~/lib/document.server";
 import { getMembership } from "~/lib/workspace.server";
 import { hasSharedAccess } from "~/lib/sharing.server";
 import { stripFrontmatter } from "~/lib/templates";
+import { getLearnedWords } from "./learned-words.server";
 
 function parseCookies(header: string): Record<string, string> {
   return Object.fromEntries(
@@ -175,6 +176,30 @@ async function checkText(
   return { matches, language: resolvedLang };
 }
 
+/**
+ * Drop spelling matches whose flagged text the user has "learned".
+ *
+ * Only misspelling matches are filtered — a learned word means "this token is a
+ * valid word", which says nothing about grammar/style/punctuation matches that
+ * happen to overlap it. The flagged text is sliced straight from the checked
+ * body by the match's own offset/length, so it's exactly what LT flagged.
+ */
+function filterLearnedWords(
+  matches: LTMatch[],
+  body: string,
+  userId: string | undefined,
+  lang: string,
+): LTMatch[] {
+  if (!userId) return matches;
+  const learned = getLearnedWords(userId, lang);
+  if (learned.size === 0) return matches;
+  return matches.filter((m) => {
+    if (m.issueType !== "misspelling") return true;
+    const word = body.slice(m.offset, m.offset + m.length).toLowerCase();
+    return !learned.has(word);
+  });
+}
+
 export async function action({ request, params }: ActionFunctionArgs) {
   const { content, language, shareToken } = (await request.json()) as {
     content?: string;
@@ -184,6 +209,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   // The share token travels in the body, so parse before authorizing.
   const doc = await authorizeDoc(request, params, shareToken);
+  // Per-user learned words apply only to a logged-in user; anonymous share-token
+  // viewers have no account to attach words to, so they get the unfiltered set.
+  const user = getSessionUser(request);
 
   // Frontmatter strip is a no-op for the plain text the editor sends, but keeps
   // the stored-doc fallback safe.
@@ -195,7 +223,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const lang = (language || "auto").trim();
   try {
     const { matches, language: resolved } = await checkText(body, lang);
-    return Response.json({ matches, language: resolved, checked: body.length });
+    const filtered = filterLearnedWords(matches, body, user?.id, resolved);
+    return Response.json({ matches: filtered, language: resolved, checked: body.length });
   } catch (err) {
     return Response.json(
       { error: err instanceof Error ? err.message : "Grammar check failed." },
