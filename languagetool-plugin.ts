@@ -23,6 +23,7 @@ import type { EditorState, Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorView } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
+import { createStatsSender } from "./stats-client";
 
 export const languagetoolPluginKey = new PluginKey<DecorationSet>("languagetool");
 
@@ -155,6 +156,9 @@ function buildDecorations(doc: PMNode, segs: Seg[], matches: LTMatch[]): Decorat
 
 let activePopover: HTMLElement | null = null;
 
+// Outcome counters for the open editor; null for anonymous share-link viewers.
+let statsSender: ReturnType<typeof createStatsSender> | null = null;
+
 function closePopover() {
   if (activePopover) {
     activePopover.remove();
@@ -187,6 +191,8 @@ function openPopover(
   learn: LearnContext | null,
 ) {
   closePopover();
+  const statLang = match.lang || learn?.lang;
+  statsSender?.track("opened", statLang);
   const pop = document.createElement("div");
   pop.className = "lt-popover";
   Object.assign(pop.style, {
@@ -241,6 +247,7 @@ function openPopover(
         // Replace the flagged range with the chosen suggestion.
         const tr = view.state.tr.insertText(r, from, to);
         view.dispatch(tr);
+        statsSender?.track("accepted", statLang);
         closePopover();
         view.focus();
       });
@@ -270,6 +277,7 @@ function openPopover(
       textAlign: "left",
     } as CSSStyleDeclaration);
     learnBtn.addEventListener("click", async () => {
+      statsSender?.track("learned", statLang);
       closePopover();
       try {
         await fetch(`/api/languagetool/${learn.docId}/words`, {
@@ -365,6 +373,7 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
     view(view: EditorView) {
       let timer: ReturnType<typeof setTimeout> | null = null;
       let seq = 0; // guards against out-of-order responses
+      statsSender = shareTokenFromLocation() ? null : createStatsSender(opts.docId);
 
       async function runCheck() {
         try {
@@ -414,6 +423,8 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
         destroy() {
           if (timer) clearTimeout(timer);
           recheck = null;
+          statsSender?.dispose();
+          statsSender = null;
           closePopover();
         },
       };

@@ -98,6 +98,21 @@ docker run -d --rm -p 8081:8010 erikvl87/languagetool
 LanguageTool is free/open-source (LGPL); the base rules (~30 languages) need no
 license. Language is auto-detected per check.
 
+## Outcome counters
+
+The editor counts how suggestions are used, to show whether they are worth
+their noise: `opened` (the popover was opened), `accepted` (a suggestion was
+applied) and `learned` ("add to dictionary"). Only counts per day and language
+(`en`, `es`, `other`) are stored in `lt_stats`; there is no text and no user id.
+Anonymous share-link viewers are not counted. Acceptance rate by language:
+
+```sql
+SELECT lang,
+       SUM(CASE WHEN event = 'accepted' THEN count END) * 1.0 /
+       SUM(CASE WHEN event = 'opened'   THEN count END) AS acceptance
+FROM lt_stats GROUP BY lang;
+```
+
 ## Install
 
 Requires a loica build with the generic extension seam (auto-discovery +
