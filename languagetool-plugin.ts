@@ -25,6 +25,7 @@ import type { EditorView } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
 import { createStatsSender } from "./stats-client";
 import { publishStatus } from "./status";
+import { nativeSpellcheck } from "./native-spellcheck";
 
 const STATUS_ID = "languagetool";
 
@@ -332,6 +333,9 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
   // Assigned by view() so a "Learn word" click can re-run the check and clear
   // the underline immediately.
   let recheck: (() => void) | null = null;
+  // True once a check has succeeded and until one fails; while true the
+  // browser's own spellcheck is switched off (see `native-spellcheck.ts`).
+  let languagetoolWorking = false;
 
   return new Plugin<DecorationSet>({
     key: languagetoolPluginKey,
@@ -353,6 +357,9 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
     props: {
       decorations(state: EditorState) {
         return languagetoolPluginKey.getState(state) ?? DecorationSet.empty;
+      },
+      attributes() {
+        return { spellcheck: nativeSpellcheck(languagetoolWorking) };
       },
       handleClick(view: EditorView, pos: number, event: MouseEvent) {
         try {
@@ -404,6 +411,7 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
           const data = (await res.json()) as { matches?: LTMatch[]; language?: string };
           if (mySeq !== seq) return; // a newer check superseded this one
           clearUnavailable();
+          setWorking(true);
           if (data.language) lastLang = data.language;
           const decos = buildDecorations(view.state.doc, lastSegs, data.matches ?? []);
           view.dispatch(view.state.tr.setMeta(languagetoolPluginKey, decos));
@@ -418,7 +426,20 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
       // one succeeds. Without this a broken LANGUAGETOOL_URL looks like a
       // document with no mistakes.
       let unavailable = false;
+
+      // Switch the browser's spellcheck on or off. An empty transaction makes
+      // ProseMirror re-read the `attributes` prop; it changes no document, so
+      // it neither syncs to collaborators nor schedules another check.
+      function setWorking(working: boolean) {
+        if (languagetoolWorking === working) {
+          return;
+        }
+        languagetoolWorking = working;
+        view.dispatch(view.state.tr);
+      }
+
       function showUnavailable(reason?: string) {
+        setWorking(false);
         unavailable = true;
         publishStatus({
           id: STATUS_ID,
