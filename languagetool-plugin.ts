@@ -48,10 +48,40 @@ interface LTMatch {
 }
 
 /** Colour an underline by LanguageTool issue type. */
-function issueColor(issueType: string): string {
-  if (issueType === "misspelling" || issueType === "typographical") return "#d64545"; // red
-  if (issueType === "grammar") return "#e08a1e"; // amber
-  return "#3b82c4"; // blue — style, register, etc.
+function issueKind(issueType: string): "spell" | "grammar" | "style" {
+  if (issueType === "misspelling" || issueType === "typographical") return "spell";
+  if (issueType === "grammar") return "grammar";
+  return "style";
+}
+
+// Underline look: thin wavy line in Loica palette vars (scarlet / tawny /
+// blue) so it follows the theme, plus a faint wash on hover. Injected once
+// because inline styles cannot express :hover.
+const STYLE_ID = "lt-issue-style";
+const ISSUE_CSS = `
+.lt-issue {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-skip-ink: none;
+  border-radius: var(--radius-xs, 4px);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.lt-issue-spell { --lt-c: var(--color-scarlet, #AF3029); }
+.lt-issue-grammar { --lt-c: var(--color-tawny, #DA702C); }
+.lt-issue-style { --lt-c: var(--color-blue, #205EA6); }
+.lt-issue { text-decoration-color: var(--lt-c); }
+.lt-issue:hover { background-color: color-mix(in srgb, var(--lt-c) 14%, transparent); }
+`;
+
+function ensureIssueStyle() {
+  if (typeof document === "undefined" || document.getElementById(STYLE_ID)) return;
+  const el = document.createElement("style");
+  el.id = STYLE_ID;
+  el.textContent = ISSUE_CSS;
+  document.head.appendChild(el);
 }
 
 /** English label from the (always-English) issueType — LT's `category` is
@@ -132,15 +162,11 @@ function buildDecorations(doc: PMNode, segs: Seg[], matches: LTMatch[]): Decorat
       const from = Math.max(0, Math.min(rawFrom, max));
       const to = Math.max(0, Math.min(rawLast + 1, max));
       if (to <= from) continue;
-      const color = issueColor(m.issueType);
       decos.push(
         Decoration.inline(
           from,
           to,
-          {
-            class: "lt-issue",
-            style: `text-decoration: underline; text-decoration-color: ${color}; text-decoration-thickness: 1.5px; text-underline-offset: 2px; cursor: pointer;`,
-          },
+          { class: `lt-issue lt-issue-${issueKind(m.issueType)}` },
           // Spec metadata — read back on click to build the popover.
           { ltMatch: m, ltFrom: from, ltTo: to },
         ),
@@ -324,6 +350,7 @@ export interface LanguageToolPluginOptions {
 
 export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
   const language = opts.language || "auto";
+  ensureIssueStyle();
   // Latest serialisation, kept so a click can resolve the range even after the
   // decoration was built asynchronously.
   let lastSegs: Seg[] = [];
