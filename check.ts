@@ -30,6 +30,7 @@ import { hasSharedAccess } from "~/lib/sharing.server";
 import { stripFrontmatter } from "~/lib/templates";
 import { getLearnedWords } from "./learned-words.server";
 import { checkByRuns } from "./languages";
+import { parseLtBody } from "./lt-response";
 
 const AUTO_LANG = "auto";
 
@@ -153,7 +154,7 @@ async function checkText(
     throw new Error(`LanguageTool returned ${res.status}: ${detail.slice(0, 300)}`);
   }
 
-  const data = (await res.json()) as {
+  const data = parseLtBody(await res.text(), base) as {
     matches?: Array<{
       message?: string;
       shortMessage?: string;

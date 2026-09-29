@@ -72,6 +72,12 @@ Spanish are detected; text in another language falls back to LanguageTool's
 `defaultEnabled: false` — off on a fresh install (needs an external server). An
 admin enables it from the Extensions panel once a server is reachable.
 
+Port 8081 is often taken by another local service. If the URL points at
+something that is not LanguageTool, the check fails with "The server at … did not
+answer like LanguageTool (it said: …). Check LANGUAGETOOL_URL." Set the variable
+to the port LanguageTool actually listens on (for example
+`LANGUAGETOOL_URL=http://localhost:8010`).
+
 **Transport:** document text is POSTed to `LANGUAGETOOL_URL`, so a **non-local
 server must be `https://`** — the extension refuses to send content to a remote
 `http://` host. Plain `http://` is allowed only for loopback (`localhost`,
