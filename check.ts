@@ -14,8 +14,10 @@
  *
  * Body: { content?: string, language?: string }
  *   content   plain text to check (falls back to the stored doc copy)
- *   language  LanguageTool code, e.g. "en-US", or "auto" (default) to detect
+ *   language  LanguageTool code, e.g. "en-US", or "auto" (default): detect the
+ *             language of each sentence and check English/Spanish runs apart
  * Returns: { matches: LTMatch[], language: string, checked: number }
+ *   Each match may carry `lang`, the code of the run it was checked in.
  *
  * Config via env (optional):
  *   LANGUAGETOOL_URL  base url (default http://localhost:8081)
@@ -27,6 +29,9 @@ import { getMembership } from "~/lib/workspace.server";
 import { hasSharedAccess } from "~/lib/sharing.server";
 import { stripFrontmatter } from "~/lib/templates";
 import { getLearnedWords } from "./learned-words.server";
+import { checkByRuns } from "./languages";
+
+const AUTO_LANG = "auto";
 
 function parseCookies(header: string): Record<string, string> {
   return Object.fromEntries(
@@ -220,8 +225,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return Response.json({ error: "Nothing to check — the document is empty." }, { status: 400 });
   }
 
-  const lang = (language || "auto").trim();
+  const lang = (language || AUTO_LANG).trim();
   try {
+    // An explicit language checks the whole body in it. "auto" instead checks
+    // each English/Spanish run in its own language, since LanguageTool's own
+    // auto-detection picks a single language for a mixed document.
+    if (lang === AUTO_LANG) {
+      const { matches, language: resolved } = await checkByRuns(body, async (runText, code) => {
+        const run = await checkText(runText, code);
+        const kept = filterLearnedWords(run.matches, runText, user?.id, run.language);
+        return { matches: kept, language: run.language };
+      });
+      return Response.json({ matches, language: resolved, checked: body.length });
+    }
+
     const { matches, language: resolved } = await checkText(body, lang);
     const filtered = filterLearnedWords(matches, body, user?.id, resolved);
     return Response.json({ matches: filtered, language: resolved, checked: body.length });

@@ -49,6 +49,20 @@ LanguageTool-specific code:
 Decorations are editor-view state — **not synced over Yjs**, so each collaborator
 checks their own view independently.
 
+### Mixed English/Spanish documents
+
+With `language=auto` the server (`check.ts`) splits the text into sentences,
+detects English or Spanish for each one (`languages.ts`, stopword based, no
+network), merges neighbours of the same language into runs and checks each run
+in its own language (`en-US` / `es`). LanguageTool's own `auto` picks one
+language per request: on a document that is mostly English, every Spanish word
+was flagged as a misspelling and Spanish errors were checked against the
+English dictionary. A sentence with no signal ("OK.") takes its neighbour's
+language. Matches carry the `lang` they were checked in, so "Add to
+dictionary" stores the word under the right language. Only English and
+Spanish are detected; text in another language falls back to LanguageTool's
+`auto` when nothing in the document is recognised.
+
 ## Config (env, optional)
 
 | Var | Default | Meaning |

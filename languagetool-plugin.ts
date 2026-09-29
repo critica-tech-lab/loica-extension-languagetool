@@ -38,6 +38,8 @@ interface LTMatch {
   ruleId: string;
   category: string;
   issueType: string;
+  /** Language code the match's text was checked in (set for auto-detected runs). */
+  lang?: string;
 }
 
 /** Colour an underline by LanguageTool issue type. */
@@ -273,7 +275,7 @@ function openPopover(
         await fetch(`/api/languagetool/${learn.docId}/words`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ word, lang: learn.lang }),
+          body: JSON.stringify({ word, lang: match.lang || learn.lang }),
         });
       } catch {
         // Non-fatal: the word just won't be remembered. Re-check anyway.
