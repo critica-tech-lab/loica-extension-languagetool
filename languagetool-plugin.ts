@@ -24,6 +24,9 @@ import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorView } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
 import { createStatsSender } from "./stats-client";
+import { publishStatus } from "./status";
+
+const STATUS_ID = "languagetool";
 
 export const languagetoolPluginKey = new PluginKey<DecorationSet>("languagetool");
 
@@ -393,16 +396,43 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
               shareToken: shareTokenFromLocation() || undefined,
             }),
           });
-          if (!res.ok) return;
+          if (!res.ok) {
+            const body = (await res.json().catch(() => null)) as { error?: string } | null;
+            showUnavailable(body?.error);
+            return;
+          }
           const data = (await res.json()) as { matches?: LTMatch[]; language?: string };
           if (mySeq !== seq) return; // a newer check superseded this one
+          clearUnavailable();
           if (data.language) lastLang = data.language;
           const decos = buildDecorations(view.state.doc, lastSegs, data.matches ?? []);
           view.dispatch(view.state.tr.setMeta(languagetoolPluginKey, decos));
         } catch {
           // Network/server error or serialisation issue — leave existing
           // decorations untouched; the next edit reschedules a check.
+          showUnavailable();
         }
+      }
+
+      // Tell the user in the footer while checks fail, and clear it as soon as
+      // one succeeds. Without this a broken LANGUAGETOOL_URL looks like a
+      // document with no mistakes.
+      let unavailable = false;
+      function showUnavailable(reason?: string) {
+        unavailable = true;
+        publishStatus({
+          id: STATUS_ID,
+          text: "Spelling check unavailable",
+          title: reason,
+          tone: "error",
+        });
+      }
+      function clearUnavailable() {
+        if (!unavailable) {
+          return;
+        }
+        unavailable = false;
+        publishStatus({ id: STATUS_ID, text: null });
       }
 
       function schedule() {
@@ -423,6 +453,7 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
         destroy() {
           if (timer) clearTimeout(timer);
           recheck = null;
+          clearUnavailable();
           statsSender?.dispose();
           statsSender = null;
           closePopover();
