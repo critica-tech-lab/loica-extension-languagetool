@@ -54,15 +54,15 @@ function issueKind(issueType: string): "spell" | "grammar" | "style" {
   return "style";
 }
 
-// Underline look: thin wavy line in Loica palette vars (scarlet / tawny /
+// Underline look: dotted line in Loica palette vars (scarlet / tawny /
 // blue) so it follows the theme, plus a faint wash on hover. Injected once
 // because inline styles cannot express :hover.
 const STYLE_ID = "lt-issue-style";
 const ISSUE_CSS = `
 .lt-issue {
   text-decoration-line: underline;
-  text-decoration-style: wavy;
-  text-decoration-thickness: 1px;
+  text-decoration-style: dotted;
+  text-decoration-thickness: 2px;
   text-underline-offset: 3px;
   text-decoration-skip-ink: none;
   border-radius: var(--radius-xs, 4px);
