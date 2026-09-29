@@ -32,7 +32,7 @@ const STATUS_ID = "languagetool";
 export const languagetoolPluginKey = new PluginKey<DecorationSet>("languagetool");
 
 /** Debounce between the last keystroke and firing a check. */
-const CHECK_DEBOUNCE_MS = 1200;
+const CHECK_DEBOUNCE_MS = 500;
 
 interface LTMatch {
   message: string;
