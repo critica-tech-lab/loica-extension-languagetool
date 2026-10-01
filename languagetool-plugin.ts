@@ -31,6 +31,12 @@ const STATUS_ID = "languagetool";
 
 export const languagetoolPluginKey = new PluginKey<DecorationSet>("languagetool");
 
+/**
+ * "Add to dictionary" is off until there is a place to review and remove learned
+ * words (a settings section); the undo toast only covers the first 6 seconds.
+ */
+const LEARN_WORDS_ENABLED = false;
+
 /** Debounce between the last keystroke and firing a check. */
 const CHECK_DEBOUNCE_MS = 500;
 
@@ -74,14 +80,93 @@ const ISSUE_CSS = `
 .lt-issue-style { --lt-c: var(--color-blue, #205EA6); }
 .lt-issue { text-decoration-color: var(--lt-c); }
 .lt-issue:hover { background-color: color-mix(in srgb, var(--lt-c) 14%, transparent); }
+
+/* Compact spelling chip: [ suggestion | dismiss | more ] above the word. */
+.lt-chip {
+  position: fixed;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg, #fff);
+  color: var(--fg, #111);
+  border: 1px solid var(--border, #ccc);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14); /* allow-hex */
+  font-size: 13px;
+}
+.lt-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.lt-chip button:hover { background: color-mix(in srgb, var(--fg, #111) 8%, transparent); }
+.lt-chip .lt-chip-main { padding: 0 8px; font-weight: 500; }
+.lt-chip .lt-chip-icon { opacity: 0.6; }
+.lt-chip .lt-chip-icon:hover { opacity: 1; }
+.lt-chip .lt-chip-empty { padding: 0 8px; opacity: 0.6; }
+.lt-chip-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #ccc);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14); /* allow-hex */
+}
+.lt-chip-menu button { justify-content: flex-start; white-space: nowrap; }
+.lt-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(420px, 92vw);
+  padding: 8px 8px 8px 14px;
+  background: var(--fg, #111);
+  color: var(--bg, #fff);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2); /* allow-hex */
+  font-size: 13px;
+}
+.lt-toast button {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg, #fff) 18%, transparent);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lt-toast button:hover { background: color-mix(in srgb, var(--bg, #fff) 30%, transparent); }
+.lt-chip-menu hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--border, #ccc); }
 `;
 
 function ensureIssueStyle() {
-  if (typeof document === "undefined" || document.getElementById(STYLE_ID)) return;
-  const el = document.createElement("style");
+  if (typeof document === "undefined") return;
+  // Reuse the tag so a hot reload picks up edited CSS instead of keeping the old one.
+  const el = document.getElementById(STYLE_ID) ?? document.createElement("style");
   el.id = STYLE_ID;
   el.textContent = ISSUE_CSS;
-  document.head.appendChild(el);
+  if (!el.isConnected) document.head.appendChild(el);
 }
 
 /** English label from the (always-English) issueType — LT's `category` is
@@ -145,8 +230,18 @@ function offsetToPos(segs: Seg[], offset: number): number | null {
   return null;
 }
 
+/** Identity of a dismissed issue: same rule on the same flagged text. */
+function ignoreKey(m: LTMatch, text: string): string {
+  return `${m.ruleId}:${text}`;
+}
+
 /** Turn LT matches into inline decorations against the current doc. */
-function buildDecorations(doc: PMNode, segs: Seg[], matches: LTMatch[]): DecorationSet {
+function buildDecorations(
+  doc: PMNode,
+  segs: Seg[],
+  matches: LTMatch[],
+  ignored: Set<string>,
+): DecorationSet {
   // A stale offset map (doc edited mid-flight) could yield a position past the
   // doc end; PM throws "Position out of range" if a decoration exceeds it and
   // that would break the editor. Clamp every position to the current doc, and
@@ -162,6 +257,7 @@ function buildDecorations(doc: PMNode, segs: Seg[], matches: LTMatch[]): Decorat
       const from = Math.max(0, Math.min(rawFrom, max));
       const to = Math.max(0, Math.min(rawLast + 1, max));
       if (to <= from) continue;
+      if (ignored.has(ignoreKey(m, doc.textBetween(from, to)))) continue;
       decos.push(
         Decoration.inline(
           from,
@@ -211,6 +307,192 @@ interface LearnContext {
   onLearned: () => void;
 }
 
+const ICON_DISMISS =
+  '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.25"/><path d="M5.75 5.75l4.5 4.5M10.25 5.75l-4.5 4.5"/></svg>';
+const ICON_MORE =
+  '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3.5" r="1.25"/><circle cx="8" cy="8" r="1.25"/><circle cx="8" cy="12.5" r="1.25"/></svg>';
+
+/** Gap between the chip and the flagged word. */
+const CHIP_GAP_PX = 6;
+/** Suggestions beyond the first that the "more" menu lists. */
+const CHIP_MENU_REPLACEMENTS = 4;
+
+function chipButton(className: string, label: string): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = className;
+  btn.setAttribute("aria-label", label);
+  btn.title = label;
+  return btn;
+}
+
+enum WordAction {
+  Learn = "learn",
+  Forget = "forget",
+}
+
+/** Teach or forget a personal dictionary word. True when the server accepted it. */
+async function postWord(docId: string, word: string, lang: string, action: WordAction): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/languagetool/${docId}/words`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ word, lang, remove: action === WordAction.Forget }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** How long the undo toast stays before the word is kept for good. */
+const UNDO_TOAST_MS = 6000;
+
+let activeToast: HTMLElement | null = null;
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+function closeToast() {
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+  activeToast?.remove();
+  activeToast = null;
+}
+
+/** Bottom toast "<message> · Undo". A newer toast replaces the previous one. */
+function showUndoToast(message: string, onUndo: () => void) {
+  closeToast();
+
+  const toast = document.createElement("div");
+  toast.className = "lt-toast";
+  toast.setAttribute("role", "status");
+
+  const text = document.createElement("span");
+  text.textContent = message;
+
+  const undo = document.createElement("button");
+  undo.type = "button";
+  undo.textContent = "Undo";
+  undo.addEventListener("click", () => {
+    closeToast();
+    onUndo();
+  });
+
+  toast.append(text, undo);
+  document.body.appendChild(toast);
+  activeToast = toast;
+  toastTimer = setTimeout(closeToast, UNDO_TOAST_MS);
+}
+
+/**
+ * Compact spelling popover, Google Docs style:
+ *
+ *    ┌──────────────────────┐
+ *    │ verdad   ⊗   ⋮       │   one click applies the best suggestion
+ *    └──────────────────────┘
+ *       berdad                 ⊗ dismisses, ⋮ lists the rest + dictionary
+ */
+function openSpellChip(
+  view: EditorView,
+  match: LTMatch,
+  from: number,
+  to: number,
+  learn: LearnContext | null,
+  onIgnore: () => void,
+) {
+  closePopover();
+  const statLang = match.lang || learn?.lang;
+  statsSender?.track("opened", statLang);
+  const word = view.state.doc.textBetween(from, to);
+  const [best, ...others] = match.replacements;
+
+  const apply = (replacement: string) => {
+    view.dispatch(view.state.tr.insertText(replacement, from, to));
+    statsSender?.track("accepted", statLang);
+    closePopover();
+    view.focus();
+  };
+
+  const chip = document.createElement("div");
+  chip.className = "lt-chip";
+
+  if (best) {
+    const main = chipButton("lt-chip-main", `Replace with ${best}`);
+    main.textContent = best;
+    main.addEventListener("click", () => apply(best));
+    chip.appendChild(main);
+  } else {
+    const empty = document.createElement("span");
+    empty.className = "lt-chip-empty";
+    empty.textContent = "No suggestions";
+    chip.appendChild(empty);
+  }
+
+  const dismiss = chipButton("lt-chip-icon", "Ignore this suggestion");
+  dismiss.innerHTML = ICON_DISMISS;
+  dismiss.addEventListener("click", () => {
+    closePopover();
+    onIgnore();
+  });
+  chip.appendChild(dismiss);
+
+  const menuItems: HTMLElement[] = others.slice(0, CHIP_MENU_REPLACEMENTS).map((r) => {
+    const item = chipButton("", `Replace with ${r}`);
+    item.textContent = r;
+    item.addEventListener("click", () => apply(r));
+    return item;
+  });
+  if (learn) {
+    if (menuItems.length) menuItems.push(document.createElement("hr"));
+    const add = chipButton("", "Add to dictionary");
+    add.textContent = `Add “${word}” to dictionary`;
+    add.addEventListener("click", async () => {
+      statsSender?.track("learned", statLang);
+      closePopover();
+      const lang = match.lang || learn.lang;
+      const saved = await postWord(learn.docId, word, lang, WordAction.Learn);
+      learn.onLearned();
+      if (!saved) {
+        // Non-fatal: the word just won't be remembered.
+        return;
+      }
+
+      showUndoToast(`Added “${word}” to dictionary`, async () => {
+        await postWord(learn.docId, word, lang, WordAction.Forget);
+        learn.onLearned();
+      });
+    });
+    menuItems.push(add);
+  }
+
+  if (menuItems.length) {
+    const more = chipButton("lt-chip-icon", "More options");
+    more.innerHTML = ICON_MORE;
+    const menu = document.createElement("div");
+    menu.className = "lt-chip-menu";
+    menu.hidden = true;
+    menu.append(...menuItems);
+    more.addEventListener("click", () => {
+      menu.hidden = !menu.hidden;
+    });
+    chip.append(more, menu);
+  }
+
+  document.body.appendChild(chip);
+
+  // Sit above the word; flip below when there is no room at the top.
+  const coords = view.coordsAtPos(from);
+  const chipRect = chip.getBoundingClientRect();
+  const above = coords.top - chipRect.height - CHIP_GAP_PX;
+  chip.style.top = `${above >= 0 ? above : coords.bottom + CHIP_GAP_PX}px`;
+  chip.style.left = `${Math.max(8, Math.min(coords.left, window.innerWidth - chipRect.width - 8))}px`;
+
+  activePopover = chip;
+  document.addEventListener("mousedown", onDocMouseDown, true);
+  document.addEventListener("scroll", closePopover, true);
+}
+
 function openPopover(
   view: EditorView,
   match: LTMatch,
@@ -219,7 +501,12 @@ function openPopover(
   clientX: number,
   clientY: number,
   learn: LearnContext | null,
+  onIgnore: () => void,
 ) {
+  if (issueKind(match.issueType) === "spell") {
+    openSpellChip(view, match, from, to, learn, onIgnore);
+    return;
+  }
   closePopover();
   const statLang = match.lang || learn?.lang;
   statsSender?.track("opened", statLang);
@@ -348,6 +635,34 @@ export interface LanguageToolPluginOptions {
   language?: string;
 }
 
+/**
+ * Remove issues whose text the transaction rewrote. `map` alone keeps a
+ * decoration over text that replaced its range, so an accepted fix stayed
+ * underlined until the next re-check. Touching an edit's edge doesn't count,
+ * only real overlap.
+ *
+ *   "aa [berdad] cc"  --replace berdad->verdad-->  "aa verdad cc"   underline gone
+ *   "aa [berdad] cc"  --replace "aa "---------->  "xx [berdad] cc"  underline kept
+ */
+function dropEdited(set: DecorationSet, tr: Transaction): DecorationSet {
+  if (!tr.docChanged) {
+    return set;
+  }
+
+  let result = set;
+  tr.mapping.maps.forEach((map, i) => {
+    const after = tr.mapping.slice(i + 1);
+    map.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
+      const from = after.map(newStart, -1);
+      const to = after.map(newEnd, 1);
+      const edited = result.find(from, to).filter((d) => d.from < to && d.to > from);
+      result = result.remove(edited);
+    });
+  });
+
+  return result;
+}
+
 export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
   const language = opts.language || "auto";
   ensureIssueStyle();
@@ -363,6 +678,8 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
   // True once a check has succeeded and until one fails; while true the
   // browser's own spellcheck is switched off (see `native-spellcheck.ts`).
   let languagetoolWorking = false;
+  // Issues the user dismissed with the chip's ⊗; filtered out of every re-check.
+  const ignored = new Set<string>();
 
   return new Plugin<DecorationSet>({
     key: languagetoolPluginKey,
@@ -375,7 +692,7 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
           const meta = tr.getMeta(languagetoolPluginKey) as DecorationSet | undefined;
           if (meta) return meta;
           // Remap existing decorations through the edit; drop those in changed ranges.
-          return old.map(tr.mapping, tr.doc);
+          return dropEdited(old.map(tr.mapping, tr.doc), tr);
         } catch {
           return DecorationSet.empty;
         }
@@ -397,10 +714,16 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
           const spec = hit.spec as { ltMatch?: LTMatch; ltFrom?: number; ltTo?: number };
           if (!spec.ltMatch) return false;
           // No account behind an anonymous share view → no "Learn word" button.
-          const learn: LearnContext | null = shareTokenFromLocation()
+          const learn: LearnContext | null = shareTokenFromLocation() || !LEARN_WORDS_ENABLED
             ? null
             : { docId: opts.docId, lang: lastLang, onLearned: () => recheck?.() };
-          openPopover(view, spec.ltMatch, spec.ltFrom!, spec.ltTo!, event.clientX, event.clientY, learn);
+          const match = spec.ltMatch;
+          const onIgnore = () => {
+            // Session-only: survives re-checks, forgotten on reload.
+            ignored.add(ignoreKey(match, view.state.doc.textBetween(spec.ltFrom!, spec.ltTo!)));
+            view.dispatch(view.state.tr.setMeta(languagetoolPluginKey, set.remove([hit])));
+          };
+          openPopover(view, match, spec.ltFrom!, spec.ltTo!, event.clientX, event.clientY, learn, onIgnore);
           return true;
         } catch {
           return false; // never let a click handler throw into the editor
@@ -440,7 +763,7 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
           clearUnavailable();
           setWorking(true);
           if (data.language) lastLang = data.language;
-          const decos = buildDecorations(view.state.doc, lastSegs, data.matches ?? []);
+          const decos = buildDecorations(view.state.doc, lastSegs, data.matches ?? [], ignored);
           view.dispatch(view.state.tr.setMeta(languagetoolPluginKey, decos));
         } catch {
           // Network/server error or serialisation issue — leave existing
@@ -505,6 +828,7 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
           statsSender?.dispose();
           statsSender = null;
           closePopover();
+          closeToast();
         },
       };
     },
