@@ -27,8 +27,7 @@ import { getSessionUser } from "~/lib/auth.server";
 import { getDocument, getDocumentByToken } from "~/lib/document.server";
 import { db } from "~/lib/db.server";
 import { verifySharePasswordCookie } from "~/lib/share-password.server";
-import { getMembership } from "~/lib/workspace.server";
-import { hasSharedAccess } from "~/lib/sharing.server";
+import { getUserDocAccess } from "~/lib/doc-access.server";
 import { stripFrontmatter } from "~/lib/templates";
 import { getLearnedWords } from "./learned-words.server";
 import { checkByRuns } from "./languages";
@@ -48,8 +47,9 @@ function parseCookies(header: string): Record<string, string> {
 }
 
 /**
- * Grant access only to a workspace member, a folder-share recipient, or a caller
- * who actually presents a valid share token for *this* document.
+ * Grant access only to a workspace member, a folder- or document-share
+ * recipient, or a caller who actually presents a valid share token for *this*
+ * document.
  *
  * The earlier version treated "the document has a share token" as "no auth
  * needed", without the caller ever proving they held it — so knowing a document
@@ -68,9 +68,7 @@ async function authorizeDoc(
 
   const user = getSessionUser(request);
   if (user) {
-    const role = getMembership(doc.workspace_id, user.id, user.is_admin);
-    const shared = doc.folder_id ? hasSharedAccess(doc.folder_id, user.id) : false;
-    if (role || shared) return doc;
+    if (getUserDocAccess(doc, user)) return doc;
   }
 
   const token = shareToken?.trim();
