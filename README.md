@@ -116,7 +116,8 @@ FROM lt_stats GROUP BY lang;
 ## Install
 
 Requires a loica build with the generic extension seam (auto-discovery +
-`editorPlugins`). No loica core edits.
+`editorPlugins`), and `getUserDocAccess` from `~/lib/doc-access.server` (loica #136 or
+later). No loica core edits.
 
 Installed as a git submodule, so the extension lives physically under `app/` and
 its `routes.ts` points straight at `check.ts` — no symlink, no route shim:
