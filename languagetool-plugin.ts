@@ -23,6 +23,7 @@ import type { EditorState, Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { EditorView } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
+import { affectedByCode, docToText, offsetToPos, type Seg } from "./doc-text";
 import { createStatsSender } from "./stats-client";
 import { publishStatus } from "./status";
 import { nativeSpellcheck } from "./native-spellcheck";
@@ -184,50 +185,6 @@ function issueLabel(issueType: string): string {
   };
   if (map[issueType]) return map[issueType];
   return issueType ? issueType[0].toUpperCase() + issueType.slice(1) : "Issue";
-}
-
-// ── plain-text serialisation + offset → PM position mapping ──────────────────
-
-interface Seg {
-  /** Start offset of this run within the serialised plain text. */
-  textStart: number;
-  /** PM position of the run's first character. */
-  pmFrom: number;
-  /** Character length of the run. */
-  len: number;
-}
-
-/**
- * Serialise the doc to plain text and record, for each text run, the offset →
- * PM-position mapping. Block boundaries emit a "\n" separator (no PM position)
- * so LanguageTool sees sentence breaks; those synthetic chars are never targets
- * of a real match.
- */
-function docToText(doc: PMNode): { text: string; segs: Seg[] } {
-  const segs: Seg[] = [];
-  let text = "";
-  doc.descendants((node, pos) => {
-    if (node.isText && node.text) {
-      segs.push({ textStart: text.length, pmFrom: pos, len: node.text.length });
-      text += node.text;
-      return false;
-    }
-    if (node.isBlock && text.length > 0 && !text.endsWith("\n")) {
-      text += "\n";
-    }
-    return true;
-  });
-  return { text, segs };
-}
-
-/** Map a plain-text offset to a PM position, or null if it lands in a gap. */
-function offsetToPos(segs: Seg[], offset: number): number | null {
-  for (const s of segs) {
-    if (offset >= s.textStart && offset < s.textStart + s.len) {
-      return s.pmFrom + (offset - s.textStart);
-    }
-  }
-  return null;
 }
 
 /** Identity of a dismissed issue: same rule on the same flagged text. */
@@ -737,7 +694,7 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
 
       async function runCheck() {
         try {
-          const { text, segs } = docToText(view.state.doc);
+          const { text, segs, holes } = docToText(view.state.doc);
           lastSegs = segs;
           if (!text.trim()) {
             view.dispatch(view.state.tr.setMeta(languagetoolPluginKey, DecorationSet.empty));
@@ -763,7 +720,9 @@ export function languagetoolPlugin(opts: LanguageToolPluginOptions): Plugin {
           clearUnavailable();
           setWorking(true);
           if (data.language) lastLang = data.language;
-          const decos = buildDecorations(view.state.doc, lastSegs, data.matches ?? [], ignored);
+          // Hints next to inline code are artefacts of its placeholder word.
+          const matches = (data.matches ?? []).filter((m) => !affectedByCode(text, holes, m));
+          const decos = buildDecorations(view.state.doc, lastSegs, matches, ignored);
           view.dispatch(view.state.tr.setMeta(languagetoolPluginKey, decos));
         } catch {
           // Network/server error or serialisation issue — leave existing
