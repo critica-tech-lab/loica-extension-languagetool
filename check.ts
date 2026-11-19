@@ -32,8 +32,14 @@ import { stripFrontmatter } from "~/lib/templates";
 import { getLearnedWords } from "./learned-words.server";
 import { checkByRuns } from "./languages";
 import { parseLtBody } from "./lt-response";
+import { checkByParagraphs, createParagraphCache } from "./paragraph-cache";
 
 const AUTO_LANG = "auto";
+
+// Results per paragraph, so an edit re-checks only the paragraph it touched.
+// Unfiltered (learned words apply per user, after this), in memory, and lost on
+// restart.
+const paragraphCache = createParagraphCache<LTMatch>();
 
 function parseCookies(header: string): Record<string, string> {
   return Object.fromEntries(
@@ -187,6 +193,11 @@ async function checkText(
   return { matches, language: resolvedLang };
 }
 
+/** `checkText`, answering from the paragraph cache where it can. */
+function checkCached(text: string, language: string) {
+  return checkByParagraphs(text, language, checkText, paragraphCache);
+}
+
 /**
  * Drop spelling matches whose flagged text the user has "learned".
  *
@@ -238,14 +249,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // auto-detection picks a single language for a mixed document.
     if (lang === AUTO_LANG) {
       const { matches, language: resolved } = await checkByRuns(body, async (runText, code) => {
-        const run = await checkText(runText, code);
+        const run = await checkCached(runText, code);
         const kept = filterLearnedWords(run.matches, runText, user?.id, run.language);
         return { matches: kept, language: run.language };
       });
       return Response.json({ matches, language: resolved, checked: body.length });
     }
 
-    const { matches, language: resolved } = await checkText(body, lang);
+    const { matches, language: resolved } = await checkCached(body, lang);
     const filtered = filterLearnedWords(matches, body, user?.id, resolved);
     return Response.json({ matches: filtered, language: resolved, checked: body.length });
   } catch (err) {
