@@ -17,12 +17,12 @@ services:
     ports:
       - "127.0.0.1:8081:8010"
     environment:
-      # Directory holding per-language n-gram subdirs (en/, es/, …).
-      - langtool_languageModel=/ngrams
-      # n-gram lookups need more heap than the bare server.
-      - Java_Xmx=2g
-    volumes:
-      - ./ngrams:/ngrams:ro
+      # Heap cap sized for a 2 GB host shared with loica. Re-add
+      # langtool_languageModel and the ./ngrams volume (and raise this) to
+      # enable n-grams.
+      - Java_Xmx=768m
+    # Hard cap so a runaway JVM is killed instead of starving loica.
+    mem_limit: 1g
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8010/v2/languages"]

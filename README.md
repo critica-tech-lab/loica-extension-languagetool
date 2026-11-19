@@ -36,18 +36,59 @@ LanguageTool-specific code:
 
 ### How inline highlighting works
 
-1. On load and after each edit (debounced ~1.2s), the plugin serialises the doc
+1. On load and after each edit (debounced ~0.5s), the plugin serialises the doc
    to **plain text**, recording an offset → ProseMirror-position map for every
    text run (block breaks become `\n`).
 2. It POSTs the plain text to `/api/languagetool/:id`.
 3. Each match's plain-text offset is mapped back to a PM range and rendered as
    an inline `Decoration` (wavy underline, coloured by issue type: red =
    spelling, amber = grammar, blue = style).
-4. Clicking an underline opens a popover with the message + suggestion buttons;
-   a button dispatches a replace transaction.
+4. Clicking a spelling underline opens a compact chip above the word
+   (`[ best suggestion | ignore | more ]`). Grammar and style underlines open
+   a popover with the message and suggestion buttons. Either dispatches a
+   replace transaction.
 
 Decorations are editor-view state — **not synced over Yjs**, so each collaborator
 checks their own view independently.
+
+Two things keep checks cheap and quiet:
+
+- **Paragraph cache** (`paragraph-cache.ts`, used by `check.ts`). Results are
+  cached per paragraph, keyed by language and a hash of the text. After an edit
+  only the changed paragraphs go to LanguageTool, in one request. The cache is
+  in memory, bounded, and holds no text. Learned words are applied after it, per
+  user. Rules that look across paragraphs do not fire.
+- **Code is skipped** (`doc-text.ts`). Code blocks are not sent. Inline code is
+  replaced by the word `code`, so the sentence around it still reads normally.
+
+### Which spellchecker is active
+
+```
+ edit -> debounce 0.5s -> POST /api/languagetool/:id -> LanguageTool
+                                      |
+              ok  -> LT underlines only, browser spellcheck OFF
+              err -> footer: "Spelling check unavailable",
+                     browser spellcheck ON (fallback)
+```
+
+The browser underlines misspellings on its own, with its own dictionary, so a
+word could be underlined twice with different suggestions
+(`native-spellcheck.ts`). Once LanguageTool answers, the editor turns the
+browser's spellcheck off. If a check fails, the browser's comes back and the
+footer shows "Spelling check unavailable" (hover for the reason). The message
+clears on the next successful check. Without it, a broken `LANGUAGETOOL_URL`
+looks like a document with no mistakes.
+
+### Learned words and ignored suggestions
+
+- **Add to dictionary** (chip menu) stores the word per user and language in
+  `lt_learned_words` (`learned-words.server.ts`). The server drops matching
+  `misspelling` matches after each check. It never hides grammar or style
+  matches. Anonymous share-link viewers have no account, so they cannot learn
+  words and see the unfiltered result.
+- Adding a word shows an undo toast.
+- **Ignore** hides that match (same rule and flagged text) in memory only, until
+  the editor is reloaded.
 
 ### Mixed English/Spanish documents
 
@@ -97,6 +138,31 @@ docker run -d --rm -p 8081:8010 erikvl87/languagetool
 
 LanguageTool is free/open-source (LGPL); the base rules (~30 languages) need no
 license. Language is auto-detected per check.
+
+### Production notes
+
+Loica runs LanguageTool in Docker on the same host, bound to loopback (see
+`deploy/README.md`):
+
+```bash
+cd deploy
+docker build -t loica-languagetool:dict .
+docker run -d --name loica-languagetool --restart unless-stopped \
+  -p 127.0.0.1:8081:8010 -e Java_Xmx=768m --memory 1g loica-languagetool:dict
+# loica .env: LANGUAGETOOL_URL=http://localhost:8081
+```
+
+- Sized for a 2 GB host shared with loica: heap 768m, container capped at 1 GiB.
+  A runaway JVM is killed (and restarted) instead of starving loica. Check
+  `docker inspect loica-languagetool --format '{{.State.OOMKilled}} {{.RestartCount}}'`.
+- No n-gram data. They only power `CONFUSION_RULE` (their/there, its/it's), which
+  helps English and does nothing measurable for Spanish. They need roughly 2 GB
+  of heap and about 8 GB of disk for English alone.
+- `LANGUAGETOOL_URL` is read from the process environment, so changing it needs a
+  restart of loica.
+- A 502 from `/api/languagetool/:id` means loica could not get a valid answer
+  from LanguageTool: the container is down, the URL is wrong, or it points at a
+  host that is not LanguageTool. The response body says which.
 
 ## Outcome counters
 
